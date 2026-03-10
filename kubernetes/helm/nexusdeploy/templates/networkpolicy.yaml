@@ -1,0 +1,68 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-api-gateway-netpol
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nexusdeploy.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}-api-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: {{ .Values.apiGateway.service.port }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: {{ .Release.Name }}-auth-service
+      ports:
+        - protocol: TCP
+          port: {{ .Values.authService.service.port }}
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-auth-service-netpol
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nexusdeploy.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}-auth-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ .Release.Name }}-api-gateway
+      ports:
+        - protocol: TCP
+          port: {{ .Values.authService.service.port }}
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: UDP
+          port: 53
+{{- end }}

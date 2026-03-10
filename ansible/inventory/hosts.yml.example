@@ -1,0 +1,88 @@
+---
+# NexusDeploy Ansible Inventory Example
+# Copy to hosts.yml and update with actual hostnames/IPs
+# For GCP dynamic inventory, use: gcp_compute plugin instead
+
+all:
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    gcp_project: "your-gcp-project-id"
+    gcp_zone: "us-central1-a"
+    gcp_region: "us-central1"
+    nexusdeploy_version: "1.0.0"
+    deploy_user: "nexusdeploy"
+
+  children:
+    # ── GKE Node Pools ──────────────────────────────────────────────────────
+    gke_nodes:
+      vars:
+        node_pool: default
+      hosts:
+        gke-node-001:
+          ansible_host: 10.128.0.10
+          node_type: n2-standard-4
+        gke-node-002:
+          ansible_host: 10.128.0.11
+          node_type: n2-standard-4
+        gke-node-003:
+          ansible_host: 10.128.0.12
+          node_type: n2-standard-4
+
+    # ── Application VMs ────────────────────────────────────────────────────
+    app_servers:
+      vars:
+        environment: production
+        docker_install: true
+      hosts:
+        app-server-001:
+          ansible_host: 10.128.0.20
+          services: [api-gateway, auth-service]
+        app-server-002:
+          ansible_host: 10.128.0.21
+          services: [worker-service]
+
+    # ── Monitoring VMs ─────────────────────────────────────────────────────
+    monitoring:
+      vars:
+        prometheus_port: 9090
+        grafana_port: 3000
+      hosts:
+        monitoring-001:
+          ansible_host: 10.128.0.30
+          grafana_enabled: true
+          prometheus_enabled: true
+
+    # ── Bastion Host ───────────────────────────────────────────────────────
+    bastion:
+      vars:
+        ansible_ssh_common_args: ""
+      hosts:
+        bastion-001:
+          ansible_host: 34.100.0.1  # Public IP of bastion
+
+    # ── Environment Groups ─────────────────────────────────────────────────
+    dev:
+      vars:
+        environment: dev
+        log_level: DEBUG
+      hosts:
+        dev-server-001:
+          ansible_host: 10.128.1.10
+
+    staging:
+      vars:
+        environment: staging
+        log_level: INFO
+      hosts:
+        staging-server-001:
+          ansible_host: 10.128.2.10
+        staging-server-002:
+          ansible_host: 10.128.2.11
+
+    prod:
+      vars:
+        environment: prod
+        log_level: WARNING
+      children:
+        app_servers:
+        monitoring:

@@ -1,0 +1,137 @@
+---
+# setup-vm.yml — Base VM configuration for NexusDeploy nodes
+- name: Configure base VM
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    base_packages:
+      - curl
+      - wget
+      - git
+      - vim
+      - htop
+      - net-tools
+      - dnsutils
+      - jq
+      - unzip
+      - ca-certificates
+      - apt-transport-https
+      - gnupg
+      - lsb-release
+      - python3-pip
+      - python3-venv
+      - chrony
+    ntp_servers:
+      - metadata.google.internal  # GCP metadata server for NTP
+      - pool.ntp.org
+    timezone: UTC
+    deploy_user: nexusdeploy
+    deploy_user_uid: 2000
+    ssh_port: 22
+    sysctl_settings:
+      net.ipv4.tcp_syncookies: 1
+      net.ipv4.ip_forward: 1
+      net.ipv4.conf.all.send_redirects: 0
+      net.ipv4.conf.default.send_redirects: 0
+      kernel.dmesg_restrict: 1
+
+  pre_tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+  roles:
+    - common
+
+  tasks:
+    - name: Set system timezone
+      community.general.timezone:
+        name: "{{ timezone }}"
+
+    - name: Configure NTP with chrony
+      ansible.builtin.template:
+        src: chrony.conf.j2
+        dest: /etc/chrony/chrony.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart chrony
+      ignore_errors: true
+
+    - name: Apply sysctl settings
+      ansible.posix.sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: true
+      loop: "{{ sysctl_settings | dict2items }}"
+
+    - name: Create deploy user
+      ansible.builtin.user:
+        name: "{{ deploy_user }}"
+        uid: "{{ deploy_user_uid }}"
+        shell: /bin/bash
+        create_home: true
+        groups: sudo
+        append: true
+        system: false
+
+    - name: Set up authorized keys for deploy user
+      ansible.posix.authorized_key:
+        user: "{{ deploy_user }}"
+        state: present
+        key: "{{ lookup('env', 'DEPLOY_SSH_PUBKEY') }}"
+      when: lookup('env', 'DEPLOY_SSH_PUBKEY') != ""
+      ignore_errors: true
+
+    - name: Configure sudoers for deploy user (no password for specific commands)
+      ansible.builtin.copy:
+        content: |
+          {{ deploy_user }} ALL=(ALL) NOPASSWD: /usr/bin/systemctl, /usr/bin/docker
+        dest: "/etc/sudoers.d/{{ deploy_user }}"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: visudo -cf %s
+
+    - name: Set hostname
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: Update /etc/hosts with hostname
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: "^127\\.0\\.1\\.1"
+        line: "127.0.1.1 {{ inventory_hostname }}"
+        state: present
+
+    - name: Configure journald log retention
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/journald.conf
+        regexp: "^#?SystemMaxUse="
+        line: "SystemMaxUse=500M"
+      notify: restart journald
+
+    - name: Install GCP Ops Agent (monitoring)
+      ansible.builtin.shell: |
+        curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+        bash add-google-cloud-ops-agent-repo.sh --also-install
+      args:
+        creates: /etc/google-cloud-ops-agent/config.yaml
+      ignore_errors: true
+
+  handlers:
+    - name: restart chrony
+      ansible.builtin.service:
+        name: chrony
+        state: restarted
+        enabled: true
+
+    - name: restart journald
+      ansible.builtin.service:
+        name: systemd-journald
+        state: restarted

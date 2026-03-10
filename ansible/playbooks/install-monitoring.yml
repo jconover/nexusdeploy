@@ -1,0 +1,32 @@
+---
+# install-monitoring.yml — Install node_exporter, fluentd, and configure prometheus endpoint
+- name: Install and configure monitoring stack
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    node_exporter_version: "1.7.0"
+    node_exporter_user: node_exporter
+    node_exporter_port: 9100
+    fluentd_version: "4"
+    gcp_project: "{{ lookup('env', 'GCP_PROJECT') | default('') }}"
+    prometheus_scrape_interval: 30s
+
+  roles:
+    - monitoring
+
+  tasks:
+    - name: Verify node_exporter is running
+      ansible.builtin.uri:
+        url: "http://localhost:{{ node_exporter_port }}/metrics"
+        method: GET
+        status_code: 200
+      register: metrics_check
+      retries: 3
+      delay: 5
+      ignore_errors: true
+
+    - name: Show node_exporter status
+      ansible.builtin.debug:
+        msg: "node_exporter metrics endpoint: {{ 'UP' if metrics_check.status == 200 else 'DOWN' }}"

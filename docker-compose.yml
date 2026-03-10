@@ -1,0 +1,109 @@
+version: "3.9"
+
+networks:
+  nexusdeploy:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+
+services:
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: nexusdeploy
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus_secret
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - nexusdeploy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d nexusdeploy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - nexusdeploy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "6379:6379"
+
+  # ── Application Services ────────────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: ./docker/api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      ENVIRONMENT: development
+      AUTH_SERVICE_URL: http://auth-service:8081
+      WORKER_SERVICE_URL: http://worker-service:8082
+    networks:
+      - nexusdeploy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8080/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  auth-service:
+    build:
+      context: ./docker/auth-service
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      ENVIRONMENT: development
+      SECRET_KEY: dev-secret-key-change-in-prod
+      TOKEN_EXPIRE_MINUTES: "60"
+      DATABASE_URL: postgresql://nexus:nexus_secret@postgres:5432/nexusdeploy
+    networks:
+      - nexusdeploy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8081/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  worker-service:
+    build:
+      context: ./docker/worker-service
+      dockerfile: Dockerfile
+    environment:
+      ENVIRONMENT: development
+      REDIS_URL: redis://redis:6379/0
+      GCS_BUCKET: nexusdeploy-dev
+    networks:
+      - nexusdeploy
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped

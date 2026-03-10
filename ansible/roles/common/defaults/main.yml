@@ -1,0 +1,33 @@
+---
+# common/defaults/main.yml — Default variables for common role
+common_timezone: UTC
+
+service_user: nexusdeploy
+service_user_uid: 2000
+
+common_packages:
+  - curl
+  - wget
+  - git
+  - vim
+  - htop
+  - net-tools
+  - dnsutils
+  - jq
+  - unzip
+  - ca-certificates
+  - apt-transport-https
+  - gnupg
+  - lsb-release
+  - python3-pip
+  - python3-venv
+  - chrony
+  - rsync
+
+common_sysctl:
+  net.ipv4.tcp_syncookies: "1"
+  net.ipv4.ip_forward: "1"
+  net.ipv4.conf.all.send_redirects: "0"
+  vm.swappiness: "10"
+  fs.file-max: "100000"
+  kernel.dmesg_restrict: "1"

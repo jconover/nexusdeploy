@@ -1,0 +1,89 @@
+{{- if and .Values.apiGateway.enabled .Values.apiGateway.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Release.Name }}-api-gateway
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nexusdeploy.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Release.Name }}-api-gateway
+  minReplicas: {{ .Values.apiGateway.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.apiGateway.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.apiGateway.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.apiGateway.autoscaling.targetMemoryUtilizationPercentage }}
+{{- end }}
+---
+{{- if and .Values.authService.enabled .Values.authService.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Release.Name }}-auth-service
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nexusdeploy.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Release.Name }}-auth-service
+  minReplicas: {{ .Values.authService.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.authService.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.authService.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.authService.autoscaling.targetMemoryUtilizationPercentage }}
+{{- end }}
+---
+{{- if and .Values.workerService.enabled .Values.workerService.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Release.Name }}-worker-service
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nexusdeploy.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Release.Name }}-worker-service
+  minReplicas: {{ .Values.workerService.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.workerService.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.workerService.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.workerService.autoscaling.targetMemoryUtilizationPercentage }}
+{{- end }}

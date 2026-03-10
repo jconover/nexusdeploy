@@ -1,0 +1,56 @@
+---
+# common/tasks/main.yml — Base system configuration tasks
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_os_family == "Debian"
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Set system timezone
+  community.general.timezone:
+    name: "{{ common_timezone }}"
+
+- name: Create service user
+  ansible.builtin.user:
+    name: "{{ service_user }}"
+    uid: "{{ service_user_uid }}"
+    shell: /bin/bash
+    create_home: true
+    system: false
+    state: present
+
+- name: Set hostname
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Apply sysctl settings
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: true
+  loop: "{{ common_sysctl | dict2items }}"
+
+- name: Configure unattended upgrades (security only)
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Enable unattended security upgrades
+  ansible.builtin.copy:
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+  when: ansible_os_family == "Debian"

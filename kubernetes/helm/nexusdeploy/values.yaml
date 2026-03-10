@@ -1,0 +1,141 @@
+# Default values for nexusdeploy Helm chart
+
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+  namespace: nexusdeploy
+
+# ── API Gateway ──────────────────────────────────────────────────────────────
+apiGateway:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: api-gateway
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  env:
+    ENVIRONMENT: production
+    LOG_LEVEL: INFO
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 15
+    periodSeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# ── Auth Service ─────────────────────────────────────────────────────────────
+authService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: auth-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8081
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  env:
+    ENVIRONMENT: production
+    TOKEN_EXPIRE_MINUTES: "30"
+    LOG_LEVEL: INFO
+
+# ── Worker Service ───────────────────────────────────────────────────────────
+workerService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: worker-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  env:
+    ENVIRONMENT: production
+    GCS_BUCKET: nexusdeploy-data
+    CELERY_CONCURRENCY: "4"
+    LOG_LEVEL: INFO
+
+# ── Ingress ──────────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: api.nexusdeploy.example.com
+      paths:
+        - path: /api/
+          pathType: Prefix
+          service: api-gateway
+          port: 8080
+        - path: /auth/
+          pathType: Prefix
+          service: auth-service
+          port: 8081
+  tls:
+    - secretName: nexusdeploy-tls
+      hosts:
+        - api.nexusdeploy.example.com
+
+# ── Service Accounts (Workload Identity) ────────────────────────────────────
+serviceAccount:
+  create: true
+  gcpServiceAccountEmail: ""  # e.g. nexusdeploy-sa@PROJECT_ID.iam.gserviceaccount.com
+
+# ── Network Policies ─────────────────────────────────────────────────────────
+networkPolicy:
+  enabled: true
+
+# ── Monitoring ───────────────────────────────────────────────────────────────
+monitoring:
+  enabled: true
+  prometheusAnnotations: true
+  scrapeInterval: 30s

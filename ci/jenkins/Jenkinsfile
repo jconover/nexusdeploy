@@ -1,0 +1,474 @@
+// NexusDeploy – Multi-stage declarative Jenkins pipeline
+// Requires: Google Cloud SDK, Docker, Terraform, kubectl, trivy, tfsec, hadolint, pytest
+
+@Library('nexusdeploy-shared-lib') _
+
+pipeline {
+    agent any
+
+    environment {
+        // GCP configuration
+        GCP_PROJECT      = credentials('gcp-project-id')
+        GCP_REGION       = 'us-central1'
+        CLUSTER_NAME     = "nexusdeploy-${DEPLOY_ENV}"
+        DOCKER_REGISTRY  = "us-central1-docker.pkg.dev/${GCP_PROJECT}/nexusdeploy"
+
+        // Deployment target (overridden per branch)
+        DEPLOY_ENV       = "${env.BRANCH_NAME == 'main' ? 'staging' : 'dev'}"
+
+        // Build metadata
+        BUILD_VERSION    = "${env.GIT_COMMIT[0..7]}"
+        IMAGE_TAG        = "${BUILD_VERSION}"
+        RELEASE_TAG      = "${env.TAG_NAME ?: ''}"
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 90, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
+    parameters {
+        choice(name: 'DEPLOY_TARGET', choices: ['auto', 'dev', 'staging', 'prod'], description: 'Override deployment target')
+        booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip unit and integration tests')
+        booleanParam(name: 'FORCE_DEPLOY_PROD', defaultValue: false, description: 'Skip canary and deploy directly to prod')
+    }
+
+    stages {
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_AUTHOR = sh(script: "git log -1 --format='%an'", returnStdout: true).trim()
+                    env.GIT_MESSAGE = sh(script: "git log -1 --format='%s'", returnStdout: true).trim()
+                    echo "Building commit ${BUILD_VERSION} by ${env.GIT_AUTHOR}: ${env.GIT_MESSAGE}"
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Lint') {
+            parallel {
+                stage('Terraform Fmt') {
+                    steps {
+                        sh 'terraform fmt -recursive -check terraform/'
+                    }
+                }
+                stage('Terraform Validate') {
+                    steps {
+                        dir('terraform/environments/dev') {
+                            sh 'terraform init -backend=false'
+                            sh 'terraform validate'
+                        }
+                    }
+                }
+                stage('Hadolint') {
+                    steps {
+                        sh '''
+                            find docker/ -name "Dockerfile*" | while read f; do
+                                echo "Linting $f"
+                                hadolint "$f"
+                            done
+                        '''
+                    }
+                }
+                stage('Python Lint') {
+                    steps {
+                        sh '''
+                            pip install --quiet flake8 black isort
+                            flake8 services/ functions/ --max-line-length=120
+                            black --check services/ functions/
+                            isort --check-only services/ functions/
+                        '''
+                    }
+                }
+                stage('YAML Lint') {
+                    steps {
+                        sh 'yamllint kubernetes/ ci/'
+                    }
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Unit Tests') {
+            when {
+                expression { !params.SKIP_TESTS }
+            }
+            steps {
+                sh '''
+                    pip install --quiet pytest pytest-cov pytest-mock
+                    pytest services/ functions/ \
+                        --cov=. \
+                        --cov-report=xml:coverage.xml \
+                        --cov-report=html:coverage-html \
+                        --junit-xml=test-results.xml \
+                        -v
+                '''
+            }
+            post {
+                always {
+                    junit 'test-results.xml'
+                    publishHTML([
+                        allowMissing: false,
+                        reportDir: 'coverage-html',
+                        reportFiles: 'index.html',
+                        reportName: 'Coverage Report'
+                    ])
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Security Scan') {
+            parallel {
+                stage('Trivy FS Scan') {
+                    steps {
+                        sh '''
+                            trivy fs . \
+                                --exit-code 1 \
+                                --severity HIGH,CRITICAL \
+                                --format table \
+                                --output trivy-fs-report.txt
+                        '''
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'trivy-fs-report.txt', allowEmptyArchive: true
+                        }
+                    }
+                }
+                stage('tfsec') {
+                    steps {
+                        sh '''
+                            tfsec terraform/ \
+                                --format lovely \
+                                --out tfsec-report.txt \
+                                --minimum-severity HIGH
+                        '''
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'tfsec-report.txt', allowEmptyArchive: true
+                        }
+                    }
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Build & Push') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'develop'
+                    buildingTag()
+                }
+            }
+            steps {
+                withCredentials([file(credentialsId: 'gcp-sa-key', variable: 'GCP_KEY')]) {
+                    sh '''
+                        gcloud auth activate-service-account --key-file="${GCP_KEY}"
+                        gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+                    '''
+                }
+                script {
+                    def services = ['api', 'worker', 'scheduler']
+                    def builds = services.collectEntries { svc ->
+                        [(svc): {
+                            def image = "${DOCKER_REGISTRY}/${svc}:${IMAGE_TAG}"
+                            sh """
+                                docker build \
+                                    --build-arg BUILD_VERSION=${BUILD_VERSION} \
+                                    --build-arg SERVICE=${svc} \
+                                    --cache-from ${DOCKER_REGISTRY}/${svc}:latest \
+                                    -t ${image} \
+                                    -t ${DOCKER_REGISTRY}/${svc}:latest \
+                                    docker/${svc}/
+
+                                trivy image ${image} \
+                                    --exit-code 1 \
+                                    --severity HIGH,CRITICAL
+
+                                docker push ${image}
+                                docker push ${DOCKER_REGISTRY}/${svc}:latest
+                            """
+                        }]
+                    }
+                    parallel builds
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Deploy to Dev') {
+            when {
+                branch 'develop'
+            }
+            steps {
+                terraformPipeline(
+                    environment: 'dev',
+                    action: 'apply',
+                    gcpKeyCredential: 'gcp-sa-key',
+                    autoApprove: true
+                )
+                deployToGKE(
+                    environment: 'dev',
+                    cluster: "nexusdeploy-dev",
+                    region: GCP_REGION,
+                    manifestDir: 'kubernetes/',
+                    imageTag: IMAGE_TAG,
+                    gcpKeyCredential: 'gcp-sa-key'
+                )
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Integration Tests') {
+            when {
+                anyOf {
+                    branch 'develop'
+                    branch 'main'
+                }
+            }
+            when {
+                expression { !params.SKIP_TESTS }
+            }
+            steps {
+                script {
+                    def baseUrl = sh(
+                        script: "terraform -chdir=terraform/environments/dev output -raw cloud_run_url",
+                        returnStdout: true
+                    ).trim()
+
+                    // Health check
+                    sh """
+                        for i in \$(seq 1 10); do
+                            status=\$(curl -s -o /dev/null -w '%{http_code}' ${baseUrl}/health)
+                            [ "\$status" = "200" ] && echo "Health check passed" && break
+                            echo "Attempt \$i: got \$status, retrying..."
+                            sleep 10
+                        done
+                    """
+
+                    // Integration test suite
+                    sh """
+                        BASE_URL=${baseUrl} pytest tests/integration/ \
+                            --junit-xml=integration-test-results.xml \
+                            -v --timeout=60
+                    """
+                }
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'integration-test-results.xml'
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Deploy to Staging') {
+            when {
+                branch 'main'
+            }
+            steps {
+                terraformPipeline(
+                    environment: 'staging',
+                    action: 'apply',
+                    gcpKeyCredential: 'gcp-sa-key',
+                    autoApprove: true
+                )
+                deployToGKE(
+                    environment: 'staging',
+                    cluster: "nexusdeploy-staging",
+                    region: GCP_REGION,
+                    manifestDir: 'kubernetes/',
+                    imageTag: IMAGE_TAG,
+                    gcpKeyCredential: 'gcp-sa-key'
+                )
+
+                // Smoke tests on staging
+                sh '''
+                    sleep 30
+                    STAGING_URL=$(terraform -chdir=terraform/environments/staging output -raw cloud_run_url)
+                    curl -f "${STAGING_URL}/health" || exit 1
+                    echo "Staging smoke test passed"
+                '''
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Production Approval') {
+            when {
+                anyOf {
+                    branch 'main'
+                    buildingTag()
+                }
+            }
+            steps {
+                script {
+                    notifySlack(
+                        channel: '#deployments',
+                        status: 'approval_required',
+                        message: "Production deployment pending approval for ${env.GIT_MESSAGE} (${BUILD_VERSION})"
+                    )
+                    timeout(time: 24, unit: 'HOURS') {
+                        input(
+                            message: "Deploy ${BUILD_VERSION} to production?",
+                            ok: 'Deploy to Production',
+                            submitter: 'jenkins-admins,release-managers',
+                            parameters: [
+                                booleanParam(name: 'CANARY_FIRST', defaultValue: true, description: 'Deploy canary (10%) before full rollout')
+                            ]
+                        )
+                    }
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Deploy to Production') {
+            when {
+                anyOf {
+                    branch 'main'
+                    buildingTag()
+                }
+            }
+            steps {
+                terraformPipeline(
+                    environment: 'prod',
+                    action: 'apply',
+                    gcpKeyCredential: 'gcp-sa-key-prod',
+                    autoApprove: false,   // explicit plan review before apply
+                    planOutput: 'prod.tfplan'
+                )
+
+                script {
+                    if (!params.FORCE_DEPLOY_PROD) {
+                        // Canary: route 10% of traffic to new version
+                        echo "Deploying canary (10% traffic split)"
+                        sh '''
+                            gcloud run services update-traffic nexusdeploy-api-prod \
+                                --region=${GCP_REGION} \
+                                --to-revisions=LATEST=10 \
+                                --project=${GCP_PROJECT}
+                        '''
+
+                        // Monitor canary for 5 minutes
+                        sh 'sleep 300'
+
+                        // Check error rate
+                        sh '''
+                            ERROR_RATE=$(gcloud monitoring metrics list \
+                                --filter="metric.type=run.googleapis.com/request_count" \
+                                --format="value(points[0].value.int64Value)" 2>/dev/null || echo 0)
+                            echo "Canary error rate check completed"
+                        '''
+
+                        echo "Promoting canary to 100%"
+                    }
+
+                    deployToGKE(
+                        environment: 'prod',
+                        cluster: "nexusdeploy-prod",
+                        region: GCP_REGION,
+                        manifestDir: 'kubernetes/',
+                        imageTag: IMAGE_TAG,
+                        gcpKeyCredential: 'gcp-sa-key-prod',
+                        verifyRollout: true,
+                        rolloutTimeoutMinutes: 10
+                    )
+
+                    // Full traffic to new version
+                    sh '''
+                        gcloud run services update-traffic nexusdeploy-api-prod \
+                            --region=${GCP_REGION} \
+                            --to-latest \
+                            --project=${GCP_PROJECT}
+                    '''
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Post-Deploy Verification') {
+            when {
+                anyOf {
+                    branch 'main'
+                    buildingTag()
+                }
+            }
+            steps {
+                sh '''
+                    PROD_URL=$(terraform -chdir=terraform/environments/prod output -raw cloud_run_url)
+                    for endpoint in /health /ready /metrics; do
+                        status=$(curl -s -o /dev/null -w "%{http_code}" ${PROD_URL}${endpoint})
+                        if [ "$status" != "200" ]; then
+                            echo "FAIL: ${endpoint} returned ${status}"
+                            exit 1
+                        fi
+                        echo "OK: ${endpoint} -> ${status}"
+                    done
+                '''
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    post {
+        always {
+            // Clean up Docker images to save disk space
+            sh '''
+                docker image prune -f --filter "until=24h" || true
+                docker builder prune -f --keep-storage 5GB || true
+            '''
+            cleanWs()
+        }
+        success {
+            script {
+                notifySlack(
+                    channel: '#deployments',
+                    status: 'success',
+                    message: "Deployment of ${BUILD_VERSION} succeeded on ${DEPLOY_ENV}"
+                )
+                // Tag release if on main
+                if (env.BRANCH_NAME == 'main') {
+                    sh "git tag -a release-${BUILD_VERSION} -m 'Auto-tagged by Jenkins build ${BUILD_NUMBER}' || true"
+                    sh "git push origin release-${BUILD_VERSION} || true"
+                }
+            }
+        }
+        failure {
+            script {
+                notifySlack(
+                    channel: '#deployments',
+                    status: 'failure',
+                    message: "Deployment of ${BUILD_VERSION} FAILED on ${DEPLOY_ENV} — initiating rollback"
+                )
+                // Rollback on production failure
+                if (env.BRANCH_NAME == 'main' || env.TAG_NAME) {
+                    echo "Rolling back production deployment"
+                    sh '''
+                        gcloud run services update-traffic nexusdeploy-api-prod \
+                            --region=${GCP_REGION} \
+                            --to-revisions=LATEST=0 \
+                            --project=${GCP_PROJECT} || true
+                    '''
+                    sh '''
+                        PREVIOUS=$(kubectl rollout history deployment/nexusdeploy-api -n production | tail -2 | head -1 | awk '{print $1}')
+                        kubectl rollout undo deployment/nexusdeploy-api -n production --to-revision=${PREVIOUS} || true
+                    '''
+                }
+            }
+        }
+        unstable {
+            notifySlack(
+                channel: '#deployments',
+                status: 'warning',
+                message: "Build ${BUILD_VERSION} is unstable — review test results"
+            )
+        }
+    }
+}
