@@ -1,0 +1,17 @@
+---
+# monitoring/defaults/main.yml — Default variables for monitoring role
+node_exporter_version: "1.7.0"
+node_exporter_user: node_exporter
+node_exporter_port: 9100
+node_exporter_path: /metrics
+
+fluentd_version: "4"
+
+gcp_project: ""
+
+prometheus_scrape_interval: 30s
+
+# Alerting thresholds
+alert_cpu_threshold: 85
+alert_memory_threshold: 90
+alert_disk_threshold: 80

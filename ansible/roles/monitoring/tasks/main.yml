@@ -1,0 +1,142 @@
+---
+# monitoring/tasks/main.yml — Install node_exporter and fluentd
+- name: Create node_exporter user
+  ansible.builtin.user:
+    name: "{{ node_exporter_user }}"
+    shell: /sbin/nologin
+    system: true
+    create_home: false
+    state: present
+
+- name: Download node_exporter
+  ansible.builtin.get_url:
+    url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+    dest: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
+    mode: "0644"
+  register: node_exporter_download
+
+- name: Extract node_exporter
+  ansible.builtin.unarchive:
+    src: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
+    dest: /tmp
+    remote_src: true
+  when: node_exporter_download.changed
+
+- name: Install node_exporter binary
+  ansible.builtin.copy:
+    src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+    dest: /usr/local/bin/node_exporter
+    owner: "{{ node_exporter_user }}"
+    group: "{{ node_exporter_user }}"
+    mode: "0755"
+    remote_src: true
+  notify: restart node_exporter
+
+- name: Install node_exporter systemd service
+  ansible.builtin.template:
+    src: node_exporter.service.j2
+    dest: /etc/systemd/system/node_exporter.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart node_exporter
+
+- name: Enable and start node_exporter
+  ansible.builtin.service:
+    name: node_exporter
+    state: started
+    enabled: true
+
+# ── Fluentd / Google Cloud Logging ────────────────────────────────────────────
+- name: Install td-agent (fluentd) apt key
+  ansible.builtin.apt_key:
+    url: https://packages.treasuredata.com/GPG-KEY-td-agent
+    state: present
+  when: ansible_os_family == "Debian"
+  ignore_errors: true
+
+- name: Add td-agent repository
+  ansible.builtin.apt_repository:
+    repo: "deb http://packages.treasuredata.com/{{ fluentd_version }}/ubuntu/{{ ansible_distribution_release }}/ {{ ansible_distribution_release }} contrib"
+    state: present
+  when: ansible_os_family == "Debian"
+  ignore_errors: true
+
+- name: Install td-agent
+  ansible.builtin.apt:
+    name: td-agent
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+  notify: restart fluentd
+  ignore_errors: true
+
+- name: Install fluentd GCP plugin
+  ansible.builtin.command: td-agent-gem install fluent-plugin-google-cloud
+  args:
+    creates: /opt/td-agent/lib/ruby/gems/*/gems/fluent-plugin-google-cloud-*
+  notify: restart fluentd
+  ignore_errors: true
+
+- name: Configure fluentd for Cloud Logging
+  ansible.builtin.copy:
+    content: |
+      <source>
+        @type systemd
+        @id input_systemd_docker
+        tag docker.*
+        path /run/log/journal
+        <storage>
+          @type local
+          persistent true
+          path /var/log/fluentd-journald-docker.pos
+        </storage>
+        read_from_head true
+        matches [{"_SYSTEMD_UNIT": "docker.service"}]
+      </source>
+
+      <source>
+        @type tail
+        @id input_app_logs
+        tag app.*
+        path /var/log/nexusdeploy/*.log
+        pos_file /var/log/fluentd-app.pos
+        <parse>
+          @type json
+          time_key timestamp
+          time_format %Y-%m-%dT%H:%M:%S.%NZ
+        </parse>
+      </source>
+
+      <match **>
+        @type google_cloud
+        @id output_gcloud
+        use_metadata_service true
+        project {{ gcp_project | default('') }}
+        <buffer>
+          @type file
+          path /var/log/fluentd-buffers/cloud-logging.buffer
+          flush_mode interval
+          retry_type exponential_backoff
+          flush_interval 5s
+          retry_max_interval 30s
+          chunk_limit_size 2M
+          queue_limit_length 8
+          overflow_action block
+        </buffer>
+      </match>
+    dest: /etc/td-agent/td-agent.conf
+    owner: td-agent
+    group: td-agent
+    mode: "0640"
+  notify: restart fluentd
+  ignore_errors: true
+
+- name: Enable and start fluentd
+  ansible.builtin.service:
+    name: td-agent
+    state: started
+    enabled: true
+  ignore_errors: true

@@ -1,0 +1,29 @@
+# Staging environment — copy to terraform.tfvars and fill in values.
+# Never commit terraform.tfvars to version control.
+
+project_id              = "my-gcp-project-staging"
+cloud_run_image         = "us-central1-docker.pkg.dev/my-gcp-project-staging/nexusdeploy/api:latest"
+functions_source_bucket = "nexusdeploy-staging-functions-src"
+alert_email             = "staging-alerts@example.com"
+
+# Optional overrides
+region        = "us-central1"
+network_name  = "nexusdeploy-staging"
+subnet_cidr   = "10.11.0.0/24"
+pods_cidr     = "10.21.0.0/16"
+services_cidr = "10.31.0.0/20"
+
+cluster_name     = "nexusdeploy-staging"
+gke_node_count   = 2
+gke_machine_type = "e2-standard-2"
+
+db_instance_name = "nexusdeploy-staging-db"
+db_tier          = "db-g1-small"
+db_name          = "nexusdeploy"
+
+cloud_run_service_name  = "nexusdeploy-api-staging"
+cloud_run_min_instances = 1
+cloud_run_max_instances = 5
+
+vertex_region     = "us-central1"
+slack_webhook_url = "https://hooks.slack.com/services/XXXX/YYYY/ZZZZ"

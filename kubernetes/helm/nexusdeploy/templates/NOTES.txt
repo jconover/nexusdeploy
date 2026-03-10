@@ -1,0 +1,42 @@
+NexusDeploy has been installed!
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Values.global.namespace }}
+Chart Version: {{ .Chart.Version }}
+App Version: {{ .Chart.AppVersion }}
+
+== Services Deployed ==
+{{- if .Values.apiGateway.enabled }}
+  API Gateway:     {{ .Release.Name }}-api-gateway:{{ .Values.apiGateway.service.port }}
+{{- end }}
+{{- if .Values.authService.enabled }}
+  Auth Service:    {{ .Release.Name }}-auth-service:{{ .Values.authService.service.port }}
+{{- end }}
+{{- if .Values.workerService.enabled }}
+  Worker Service:  {{ .Release.Name }}-worker-service (Celery)
+{{- end }}
+
+== Access ==
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  https://{{ .host }}
+{{- end }}
+{{- else }}
+  kubectl port-forward svc/{{ .Release.Name }}-api-gateway 8080:8080 -n {{ .Values.global.namespace }}
+  Then visit: http://localhost:8080
+{{- end }}
+
+== Health Checks ==
+  kubectl get pods -n {{ .Values.global.namespace }}
+  kubectl get hpa -n {{ .Values.global.namespace }}
+
+== Workload Identity ==
+{{- if .Values.serviceAccount.gcpServiceAccountEmail }}
+  GCP Service Account: {{ .Values.serviceAccount.gcpServiceAccountEmail }}
+  Run: gcloud iam service-accounts add-iam-policy-binding \
+    {{ .Values.serviceAccount.gcpServiceAccountEmail }} \
+    --role roles/iam.workloadIdentityUser \
+    --member "serviceAccount:PROJECT_ID.svc.id.goog[{{ .Values.global.namespace }}/{{ include "nexusdeploy.serviceAccountName" . }}]"
+{{- else }}
+  Set serviceAccount.gcpServiceAccountEmail in values.yaml to enable Workload Identity.
+{{- end }}

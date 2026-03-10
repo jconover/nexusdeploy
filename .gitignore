@@ -1,0 +1,91 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+terraform.tfstate.d/
+*.tfplan
+tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Terraform variable files (keep .example files)
+*.tfvars
+!*.tfvars.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+.env
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Docker
+*.tar
+docker-compose.override.yml
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
+.kube/
+
+# Ansible
+*.retry
+ansible/roles/*/files/*.pem
+ansible/roles/*/files/*.key
+
+# Secrets and credentials
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+service-account.json
+*-service-account.json
+credentials.json
+gcp-credentials.json
+.gcp/
+
+# IDE and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Node (for any tooling scripts)
+node_modules/
+npm-debug.log*
+
+# Helm
+charts/*.tgz
+
+# Claude Code / OMC
+.omc/
+.claude/
+CLAUDE.md

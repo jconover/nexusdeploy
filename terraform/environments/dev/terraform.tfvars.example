@@ -1,0 +1,35 @@
+# Copy this file to terraform.tfvars and fill in real values.
+# Never commit terraform.tfvars to version control.
+
+# ── Required ─────────────────────────────────────────────────────────────────
+project_id     = "my-gcp-project-dev"
+cloud_run_image = "us-central1-docker.pkg.dev/my-gcp-project-dev/nexusdeploy-dev/api:latest"
+
+# ── Optional overrides (defaults defined in variables.tf) ────────────────────
+region      = "us-central1"
+zone        = "us-central1-a"
+environment = "dev"
+
+network_name  = "nexusdeploy-dev"
+subnet_cidr   = "10.10.0.0/24"
+pods_cidr     = "10.20.0.0/16"
+services_cidr = "10.30.0.0/20"
+
+cluster_name     = "nexusdeploy-dev"
+gke_node_count   = 1
+gke_machine_type = "e2-medium"
+
+db_instance_name = "nexusdeploy-dev-db"
+db_tier          = "db-f1-micro"
+db_name          = "nexusdeploy"
+
+cloud_run_service_name  = "nexusdeploy-api-dev"
+cloud_run_min_instances = 0
+cloud_run_max_instances = 3
+
+artifact_registry_repo = "nexusdeploy-dev"
+vertex_region          = "us-central1"
+
+# ── Notifications (optional) ──────────────────────────────────────────────────
+alert_email       = "dev-alerts@example.com"
+slack_webhook_url = "https://hooks.slack.com/services/XXXX/YYYY/ZZZZ"

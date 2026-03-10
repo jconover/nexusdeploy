@@ -1,0 +1,15 @@
+apiVersion: v2
+name: nexusdeploy
+description: NexusDeploy - Multi-service GCP deployment platform
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - nexusdeploy
+  - gcp
+  - microservices
+home: https://github.com/example/nexusdeploy
+maintainers:
+  - name: NexusDeploy Team
+    email: platform@example.com
+dependencies: []

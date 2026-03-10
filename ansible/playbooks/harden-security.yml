@@ -1,0 +1,238 @@
+---
+# harden-security.yml — Apply CIS benchmark security hardening
+- name: Security hardening (CIS benchmarks)
+  hosts: "{{ target_hosts | default('all') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    ssh_port: 22
+    allowed_ssh_users: ["ansible", "nexusdeploy"]
+    password_max_days: 90
+    password_min_days: 7
+    password_warn_days: 14
+    login_timeout: 60
+    max_auth_tries: 3
+    audit_log_size: 8192
+
+  tasks:
+    # ── SSH Hardening ────────────────────────────────────────────────────────
+    - name: Disable root SSH login
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?PermitRootLogin"
+        line: "PermitRootLogin no"
+        state: present
+      notify: restart sshd
+
+    - name: Disable password authentication
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?PasswordAuthentication"
+        line: "PasswordAuthentication no"
+        state: present
+      notify: restart sshd
+
+    - name: Set SSH LoginGraceTime
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?LoginGraceTime"
+        line: "LoginGraceTime {{ login_timeout }}"
+        state: present
+      notify: restart sshd
+
+    - name: Set MaxAuthTries
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?MaxAuthTries"
+        line: "MaxAuthTries {{ max_auth_tries }}"
+        state: present
+      notify: restart sshd
+
+    - name: Disable X11 forwarding
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?X11Forwarding"
+        line: "X11Forwarding no"
+        state: present
+      notify: restart sshd
+
+    - name: Configure AllowUsers
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?AllowUsers"
+        line: "AllowUsers {{ allowed_ssh_users | join(' ') }}"
+        state: present
+      notify: restart sshd
+
+    # ── Password Policy ──────────────────────────────────────────────────────
+    - name: Set password aging policy
+      ansible.builtin.lineinfile:
+        path: /etc/login.defs
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      loop:
+        - regexp: "^PASS_MAX_DAYS"
+          line: "PASS_MAX_DAYS   {{ password_max_days }}"
+        - regexp: "^PASS_MIN_DAYS"
+          line: "PASS_MIN_DAYS   {{ password_min_days }}"
+        - regexp: "^PASS_WARN_AGE"
+          line: "PASS_WARN_AGE   {{ password_warn_days }}"
+
+    - name: Install libpam-pwquality
+      ansible.builtin.apt:
+        name: libpam-pwquality
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Configure password complexity
+      ansible.builtin.copy:
+        content: |
+          minlen = 14
+          dcredit = -1
+          ucredit = -1
+          ocredit = -1
+          lcredit = -1
+          retry = 3
+        dest: /etc/security/pwquality.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    # ── iptables / Firewall ───────────────────────────────────────────────────
+    - name: Install iptables-persistent
+      ansible.builtin.apt:
+        name:
+          - iptables-persistent
+          - netfilter-persistent
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Allow loopback traffic
+      ansible.builtin.iptables:
+        chain: INPUT
+        in_interface: lo
+        jump: ACCEPT
+      notify: save iptables
+
+    - name: Allow established connections
+      ansible.builtin.iptables:
+        chain: INPUT
+        ctstate: ESTABLISHED,RELATED
+        jump: ACCEPT
+      notify: save iptables
+
+    - name: Allow SSH
+      ansible.builtin.iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: "{{ ssh_port }}"
+        jump: ACCEPT
+      notify: save iptables
+
+    - name: Allow node_exporter metrics
+      ansible.builtin.iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: "9100"
+        source: "10.0.0.0/8"
+        jump: ACCEPT
+      notify: save iptables
+
+    - name: Drop all other INPUT traffic
+      ansible.builtin.iptables:
+        chain: INPUT
+        policy: DROP
+      notify: save iptables
+
+    # ── Audit Logging ─────────────────────────────────────────────────────────
+    - name: Install auditd
+      ansible.builtin.apt:
+        name: auditd
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Configure auditd
+      ansible.builtin.copy:
+        content: |
+          max_log_file = {{ audit_log_size }}
+          max_log_file_action = rotate
+          num_logs = 5
+          space_left_action = SYSLOG
+          action_mail_acct = root
+          admin_space_left_action = halt
+        dest: /etc/audit/auditd.conf
+        owner: root
+        group: root
+        mode: "0640"
+      notify: restart auditd
+
+    - name: Configure audit rules (CIS)
+      ansible.builtin.copy:
+        content: |
+          # Log all privileged commands
+          -a always,exit -F arch=b64 -S execve -F euid=0 -k root-commands
+          # Monitor /etc/passwd changes
+          -w /etc/passwd -p wa -k identity
+          -w /etc/shadow -p wa -k identity
+          -w /etc/group -p wa -k identity
+          # Monitor SSH config
+          -w /etc/ssh/sshd_config -p wa -k sshd
+          # Monitor sudoers
+          -w /etc/sudoers -p wa -k sudoers
+          -w /etc/sudoers.d/ -p wa -k sudoers
+          # Monitor cron
+          -w /etc/crontab -p wa -k cron
+          -w /etc/cron.d/ -p wa -k cron
+          # Log unsuccessful file access
+          -a always,exit -F arch=b64 -S open -F exit=-EACCES -k access
+          -a always,exit -F arch=b64 -S open -F exit=-EPERM -k access
+        dest: /etc/audit/rules.d/nexusdeploy.rules
+        owner: root
+        group: root
+        mode: "0640"
+      notify: restart auditd
+
+    # ── File Permissions ──────────────────────────────────────────────────────
+    - name: Set permissions on sensitive files
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /etc/passwd,  owner: root, group: root, mode: "0644" }
+        - { path: /etc/shadow,  owner: root, group: shadow, mode: "0640" }
+        - { path: /etc/group,   owner: root, group: root, mode: "0644" }
+        - { path: /etc/gshadow, owner: root, group: shadow, mode: "0640" }
+        - { path: /etc/crontab, owner: root, group: root, mode: "0600" }
+      ignore_errors: true
+
+    # ── Disable unused services ───────────────────────────────────────────────
+    - name: Disable and stop unused services
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - avahi-daemon
+        - cups
+        - rpcbind
+        - nfs-server
+      ignore_errors: true
+
+  handlers:
+    - name: restart sshd
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
+
+    - name: restart auditd
+      ansible.builtin.service:
+        name: auditd
+        state: restarted
+
+    - name: save iptables
+      ansible.builtin.command: netfilter-persistent save
+      changed_when: true

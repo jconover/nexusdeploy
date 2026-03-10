@@ -1,0 +1,18 @@
+---
+# monitoring/handlers/main.yml
+- name: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: restart node_exporter
+  ansible.builtin.service:
+    name: node_exporter
+    state: restarted
+    enabled: true
+
+- name: restart fluentd
+  ansible.builtin.service:
+    name: td-agent
+    state: restarted
+    enabled: true
+  ignore_errors: true

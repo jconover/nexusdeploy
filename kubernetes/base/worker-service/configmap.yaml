@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: worker-service-config
+  namespace: nexusdeploy
+  labels:
+    app: worker-service
+    app.kubernetes.io/name: worker-service
+    app.kubernetes.io/component: config
+data:
+  ENVIRONMENT: "production"
+  GCS_BUCKET: "nexusdeploy-data"
+  LOG_LEVEL: "INFO"
+  CELERY_CONCURRENCY: "4"

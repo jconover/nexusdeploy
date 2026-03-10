@@ -1,0 +1,37 @@
+{{- if .Values.apiGateway.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-api-gateway
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nexusdeploy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+spec:
+  type: {{ .Values.apiGateway.service.type }}
+  selector:
+    app: {{ .Release.Name }}-api-gateway
+  ports:
+    - name: http
+      port: {{ .Values.apiGateway.service.port }}
+      targetPort: {{ .Values.apiGateway.service.port }}
+{{- end }}
+---
+{{- if .Values.authService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-auth-service
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nexusdeploy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth-service
+spec:
+  type: {{ .Values.authService.service.type }}
+  selector:
+    app: {{ .Release.Name }}-auth-service
+  ports:
+    - name: http
+      port: {{ .Values.authService.service.port }}
+      targetPort: {{ .Values.authService.service.port }}
+{{- end }}
