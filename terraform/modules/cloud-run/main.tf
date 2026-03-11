@@ -1,7 +1,8 @@
 resource "google_cloud_run_v2_service" "main" {
-  project  = var.project_id
-  name     = var.service_name
-  location = var.region
+  project             = var.project_id
+  name                = var.service_name
+  location            = var.region
+  deletion_protection = var.deletion_protection
 
   template {
     service_account = var.service_account_email
