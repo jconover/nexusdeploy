@@ -3,7 +3,15 @@
 
 # ── Required ─────────────────────────────────────────────────────────────────
 project_id     = "my-gcp-project-dev"
-cloud_run_image = "us-central1-docker.pkg.dev/my-gcp-project-dev/nexusdeploy-dev/api:latest"
+
+# Use Google's sample container for initial deployment. Terraform creates the
+# Artifact Registry repo and Cloud Run service in one pass. Once your CI/CD
+# pipeline builds and pushes the real image, Cloud Run updates automatically.
+# The cloud-run module's lifecycle block ignores subsequent image changes so
+# Terraform won't revert CI/CD-deployed images.
+cloud_run_image = "us-docker.pkg.dev/cloudrun/container/hello:latest"
+
+functions_source_bucket = "my-gcp-project-dev-functions-source"
 
 # ── Optional overrides (defaults defined in variables.tf) ────────────────────
 region      = "us-central1"

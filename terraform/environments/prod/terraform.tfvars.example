@@ -2,7 +2,8 @@
 # NEVER commit terraform.tfvars with real credentials.
 
 project_id              = "my-gcp-project-prod"
-cloud_run_image         = "us-central1-docker.pkg.dev/my-gcp-project-prod/nexusdeploy/api:v1.0.0"
+# Use placeholder for initial deploy; CI/CD will push the real image afterward.
+cloud_run_image         = "us-docker.pkg.dev/cloudrun/container/hello:latest"
 functions_source_bucket = "nexusdeploy-prod-functions-src"
 alert_email             = "prod-oncall@example.com"
 

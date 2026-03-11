@@ -200,16 +200,35 @@ cp terraform/environments/dev/terraform.tfvars.example \
 # Edit terraform.tfvars with your project ID, regions, and CIDR ranges
 ```
 
+> **Note:** The example tfvars use a Google-provided placeholder image
+> (`us-docker.pkg.dev/cloudrun/container/hello:latest`) for Cloud Run.
+> This lets `terraform apply` succeed in a single pass without needing to
+> build and push a container image first. The cloud-run module's `lifecycle`
+> block ignores image changes, so your CI/CD pipeline can deploy the real
+> image afterward without Terraform reverting it.
+
 ### 4. Deploy infrastructure
 
 ```bash
 cd terraform/environments/dev
-terraform init
-terraform plan -out=tfplan
+terraform init -backend-config=backend.hcl
+terraform plan -out=tfplan -var-file=terraform.tfvars
 terraform apply tfplan
 ```
 
-### 5. Configure kubectl
+### 5. Build and push the application image (optional)
+
+Once the Artifact Registry repository is created by Terraform, you can push your real container image:
+
+```bash
+gcloud auth configure-docker us-central1-docker.pkg.dev
+docker build -t us-central1-docker.pkg.dev/YOUR_PROJECT_ID/nexusdeploy-dev/api:latest ./docker/api-gateway
+docker push us-central1-docker.pkg.dev/YOUR_PROJECT_ID/nexusdeploy-dev/api:latest
+```
+
+Your CI/CD pipeline (Jenkins or GitLab CI) handles this automatically for subsequent deploys.
+
+### 6. Configure kubectl
 
 ```bash
 gcloud container clusters get-credentials nexusdeploy-dev \
@@ -217,13 +236,13 @@ gcloud container clusters get-credentials nexusdeploy-dev \
   --project YOUR_PROJECT_ID
 ```
 
-### 6. Deploy application
+### 7. Deploy application
 
 ```bash
 kubectl apply -k kubernetes/overlays/dev
 ```
 
-### 7. Verify deployment
+### 8. Verify deployment
 
 ```bash
 python scripts/health-checks/verify_deployment.py --env dev
