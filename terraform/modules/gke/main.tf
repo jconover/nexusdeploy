@@ -1,9 +1,10 @@
 resource "google_container_cluster" "main" {
   provider = google-beta
 
-  project  = var.project_id
-  name     = var.cluster_name
-  location = var.region
+  project             = var.project_id
+  name                = var.cluster_name
+  location            = var.region
+  deletion_protection = var.deletion_protection
 
   network    = var.network_id
   subnetwork = var.subnet_id

@@ -164,14 +164,15 @@ module "gke" {
 
   node_service_account = module.iam.service_account_emails["gke-nodes"]
 
-  # Dev: preemptible, minimal nodes, scale quickly
-  node_count      = var.gke_node_count
-  machine_type    = var.gke_machine_type
-  min_nodes       = 1
-  max_nodes       = 3
-  disk_size       = 50
-  preemptible     = true
-  release_channel = "REGULAR"
+  # Dev: preemptible, minimal nodes, no deletion protection
+  deletion_protection = false
+  node_count          = var.gke_node_count
+  machine_type        = var.gke_machine_type
+  min_nodes           = 1
+  max_nodes           = 3
+  disk_size           = 50
+  preemptible         = true
+  release_channel     = "REGULAR"
 
   depends_on = [module.vpc, module.iam, google_project_service.apis]
 }
