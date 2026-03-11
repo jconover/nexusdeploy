@@ -131,6 +131,12 @@ variable "node_taints" {
   default = []
 }
 
+variable "deletion_protection" {
+  description = "Whether to enable deletion protection on the GKE cluster"
+  type        = bool
+  default     = true
+}
+
 variable "release_channel" {
   description = "GKE release channel (RAPID, REGULAR, STABLE)"
   type        = string
