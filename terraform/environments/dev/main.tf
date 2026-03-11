@@ -208,6 +208,7 @@ module "cloud_run" {
     DB_NAME     = var.db_name
   }
 
+  deletion_protection   = false
   allow_unauthenticated = false
   invoker_sa_emails     = [module.iam.service_account_emails["cloud-functions"]]
 

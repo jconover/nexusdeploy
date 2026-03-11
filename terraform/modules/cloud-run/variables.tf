@@ -113,3 +113,9 @@ variable "health_check_path" {
   type        = string
   default     = "/health"
 }
+
+variable "deletion_protection" {
+  description = "Whether to enable deletion protection on the Cloud Run service"
+  type        = bool
+  default     = true
+}
