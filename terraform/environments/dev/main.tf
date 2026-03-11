@@ -34,6 +34,33 @@ provider "google-beta" {
   region  = var.region
 }
 
+# ── Enable Required GCP APIs ────────────────────────────────────────────────
+locals {
+  required_apis = [
+    "compute.googleapis.com",
+    "container.googleapis.com",
+    "secretmanager.googleapis.com",
+    "sqladmin.googleapis.com",
+    "servicenetworking.googleapis.com",
+    "run.googleapis.com",
+    "cloudfunctions.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "monitoring.googleapis.com",
+    "iam.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "pubsub.googleapis.com",
+  ]
+}
+
+resource "google_project_service" "apis" {
+  for_each = toset(local.required_apis)
+
+  project = var.project_id
+  service = each.value
+
+  disable_on_destroy = false
+}
+
 # ── VPC ───────────────────────────────────────────────────────────────────────
 module "vpc" {
   source = "../../modules/vpc"
@@ -44,6 +71,8 @@ module "vpc" {
   subnet_cidr   = var.subnet_cidr
   pods_cidr     = var.pods_cidr
   services_cidr = var.services_cidr
+
+  depends_on = [google_project_service.apis]
 }
 
 # ── IAM ───────────────────────────────────────────────────────────────────────
@@ -86,6 +115,8 @@ module "iam" {
   }
 
   custom_roles = []
+
+  depends_on = [google_project_service.apis]
 }
 
 # ── Secret Manager ────────────────────────────────────────────────────────────
@@ -95,8 +126,8 @@ module "secret_manager" {
   project_id = var.project_id
 
   secrets = {
-    db-password = { value = null }
-    api-key     = { value = null }
+    db-password   = { value = null }
+    api-key       = { value = null }
     slack-webhook = { value = null }
   }
 
@@ -105,7 +136,7 @@ module "secret_manager" {
     module.iam.service_account_emails["cloud-run"],
   ]
 
-  depends_on = [module.iam]
+  depends_on = [module.iam, google_project_service.apis]
 }
 
 # ── GKE ───────────────────────────────────────────────────────────────────────
@@ -132,7 +163,7 @@ module "gke" {
   preemptible     = true
   release_channel = "REGULAR"
 
-  depends_on = [module.vpc, module.iam]
+  depends_on = [module.vpc, module.iam, google_project_service.apis]
 }
 
 # ── Cloud SQL ─────────────────────────────────────────────────────────────────
@@ -152,7 +183,7 @@ module "cloud_sql" {
   backup_enabled      = false
   deletion_protection = false
 
-  depends_on = [module.vpc]
+  depends_on = [module.vpc, google_project_service.apis]
 }
 
 # ── Cloud Run ─────────────────────────────────────────────────────────────────
@@ -180,7 +211,7 @@ module "cloud_run" {
   allow_unauthenticated = false
   invoker_sa_emails     = [module.iam.service_account_emails["cloud-functions"]]
 
-  depends_on = [module.iam, module.cloud_sql]
+  depends_on = [module.iam, module.cloud_sql, google_project_service.apis]
 }
 
 # ── Cloud Functions ───────────────────────────────────────────────────────────
@@ -199,10 +230,10 @@ module "event_processor" {
   create_trigger_topic  = true
 
   # Dev: minimal resources, retry off
-  memory          = "256M"
-  timeout_seconds = 60
-  min_instances   = 0
-  max_instances   = 2
+  memory           = "256M"
+  timeout_seconds  = 60
+  min_instances    = 0
+  max_instances    = 2
   retry_on_failure = false
 
   environment_variables = {
@@ -210,7 +241,7 @@ module "event_processor" {
     API_SERVICE_URL = module.cloud_run.service_url
   }
 
-  depends_on = [module.iam, module.cloud_run]
+  depends_on = [module.iam, module.cloud_run, google_project_service.apis]
 }
 
 # ── Monitoring ────────────────────────────────────────────────────────────────
@@ -238,7 +269,7 @@ module "monitoring" {
     error_rate_rps = 10
   }
 
-  depends_on = [module.cloud_run]
+  depends_on = [module.cloud_run, google_project_service.apis]
 }
 
 # ── Vertex AI ─────────────────────────────────────────────────────────────────
